@@ -46,14 +46,19 @@ const WARN = '#d6a33a'
 const ALERT = '#cf5f45'
 
 // Sized so a full set (signal, both limits, session, cost) fits one row of
-// the desktop band at a common window width.
+// the desktop band at a common window width. Narrower, the row tightens
+// (`tight`), then scales down (`fit`), and never wraps.
 const FONT = 11.5
 const CHAR = FONT * 0.62
 const H = 24
-const PAD = 7
-const GAP = 4
 const ICON = 15
-const BAR = 28
+
+// Spacing in a pill: its side padding, the gap between runs, the bar's length.
+export type Density = 'normal' | 'tight'
+const METRICS = {
+  normal: { pad: 7, gap: 4, bar: 28 },
+  tight: { pad: 4, gap: 3, bar: 22 },
+} satisfies Record<Density, { pad: number; gap: number; bar: number }>
 const FAMILY = "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace"
 
 type Icon = (x: number, color: string, n?: number) => string
@@ -105,15 +110,16 @@ export type Run =
   | { kind: 'bar'; percent: number; pace?: number; level: 'good' | 'warn' | 'alert' }
   | { kind: 'divider' }
 
-const runWidth = (r: Run) =>
-  r.kind === 'icon' ? ICON : r.kind === 'text' ? Math.ceil(r.text.length * CHAR) : r.kind === 'bar' ? BAR : 1
+const runWidth = (r: Run, bar: number) =>
+  r.kind === 'icon' ? ICON : r.kind === 'text' ? Math.ceil(r.text.length * CHAR) : r.kind === 'bar' ? bar : 1
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 // The pill as an SVG document and the width it takes, in CSS pixels.
-export function pill(runs: Run[], tone: Tone, style: Style = 'soft') {
+export function pill(runs: Run[], tone: Tone, style: Style = 'soft', density: Density = 'normal') {
   const p = paint(style, tone)
-  const width = PAD * 2 + runs.reduce((w, r) => w + runWidth(r), 0) + GAP * Math.max(0, runs.length - 1)
+  const { pad: PAD, gap: GAP, bar: BAR } = METRICS[density]
+  const width = PAD * 2 + runs.reduce((w, r) => w + runWidth(r, BAR), 0) + GAP * Math.max(0, runs.length - 1)
   const mid = H / 2
   let x = PAD
   const body: string[] = []
@@ -138,7 +144,7 @@ export function pill(runs: Run[], tone: Tone, style: Style = 'soft') {
       }
     }
     if (r.kind === 'divider') body.push(`<rect x="${x}" y="${mid - 7}" width="1" height="14" fill="${p.rule}"/>`)
-    x += runWidth(r) + GAP
+    x += runWidth(r, BAR) + GAP
   }
   const ring = p.ring ? ` stroke="${p.ring}" stroke-opacity="0.55" stroke-width="1"` : ''
   const source =
@@ -150,3 +156,42 @@ export function pill(runs: Run[], tone: Tone, style: Style = 'soft') {
 // "15.6k", "954.2k", "1.2M", "850".
 export const tokens = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n))
+
+// The band's width is counted in character cells (`bodyColumns`); the pills are
+// drawn in CSS pixels. This many pixels to a cell is an assumption, set low so
+// a wrong guess shrinks the row early rather than wrapping it.
+export const CELL = 7
+// Pixels a row of the band keeps for the netsignal pill and its gap, which
+// usagebar cannot see: set aside whether netsignal is loaded or not.
+export const NETSIGNAL_ROOM = 150 + CELL
+// The ◐ style switch and the gap before it.
+export const SWITCH_ROOM = 3 * CELL
+// Below this many pixels of band the pills use the tight spacing.
+const NARROW = 640
+
+export const available = (columns: number | undefined) =>
+  typeof columns === 'number' && Number.isFinite(columns) && columns > 0 ? columns * CELL : Infinity
+
+export const densityFor = (columns: number | undefined): Density => (available(columns) < NARROW ? 'tight' : 'normal')
+
+// A scale below this is too small to read, so the row is cut to a leaner
+// variant before it is scaled that far; and the least it is ever scaled to.
+const SOFT = 0.85
+const FLOOR = 0.6
+
+type Sized = { width: number; height: number }
+
+// Fit one row of pills into `room` pixels, spaced `gap` apart. `variants` run
+// from richest to leanest: the first that needs no more than a mild shrink
+// wins, else the leanest, scaled as far as FLOOR. The SVG markup keeps its
+// viewBox, so a smaller width and height scale text and spacing together.
+export function fit<T extends Sized>(variants: T[][], room: number, gap: number) {
+  const gaps = (row: T[]) => gap * Math.max(0, row.length - 1)
+  const widths = (row: T[]) => row.reduce((w, p) => w + p.width, 0)
+  // The gaps between pills stay as they are: only the pills scale.
+  const ratio = (row: T[]) => (room - gaps(row)) / widths(row)
+  const row = variants.find(v => ratio(v) >= SOFT) ?? variants[variants.length - 1]!
+  const scale = Math.max(FLOOR, Math.min(1, ratio(row)))
+  if (scale === 1) return { row, scale }
+  return { row: row.map(p => ({ ...p, width: Math.floor(p.width * scale), height: Math.floor(p.height * scale) })), scale }
+}

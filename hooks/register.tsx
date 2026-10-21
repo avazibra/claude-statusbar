@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, PluginOptions, Register } from 'claude-code'
 
 import type { NetSample as Sample } from '../types'
-import { type Run, STYLES, type Style, TONES, pill, styleFrom } from './pills'
+import { type Density, type Run, STYLES, type Style, TONES, densityFor, pill, styleFrom } from './pills'
 
 // The latest sample, held by the host so the desktop band redraws on each probe.
 const lastSample = atom({ plugin: 'netsignal', key: 'last' } as const, null)
@@ -67,7 +67,7 @@ export const level = (last: Sample | null, c: Config): Level => {
 const TONE: Record<Level, keyof typeof TONES> = { good: 'good', ok: 'ok', poor: 'bad', bad: 'bad', offline: 'bad', unknown: 'unknown' }
 const LIT: Record<Level, number> = { good: 3, ok: 2, poor: 1, bad: 1, offline: 0, unknown: 3 }
 
-export const signalPill = (last: Sample | null, c: Config, style: Style = c.pillStyle) => {
+export const signalPill = (last: Sample | null, c: Config, style: Style = c.pillStyle, density: Density = 'normal') => {
   const lv = level(last, c)
   const runs: Run[] = [{ kind: 'icon', icon: 'signal', n: LIT[lv] }]
   if (last === null) runs.push({ kind: 'text', text: '?', muted: true })
@@ -78,7 +78,7 @@ export const signalPill = (last: Sample | null, c: Config, style: Style = c.pill
     if (c.style === 'full' && c.bwIntervalMs > 0 && last.mbps > 0)
       runs.push({ kind: 'icon', icon: 'download' }, { kind: 'text', text: `${last.mbps}M`, muted: true })
   }
-  return { ...pill(runs, TONES[TONE[lv]], style), alt: `Network signal: ${render(last, c)}` }
+  return { ...pill(runs, TONES[TONE[lv]], style, density), alt: `Network signal: ${render(last, c)}` }
 }
 
 export const render = (last: Sample | null, c: Config) => {
@@ -209,13 +209,13 @@ export const register: Register = (on, options) => {
     }
     const isPill = m.config.desktopPlacement !== 'footer'
     if (e.surface !== 'desktop' || !isPill || e.props.hasSurvey) return next(e)
-    const p = signalPill(await read($, lastSample), m.config, (await read($, pickedStyle)) ?? m.config.pillStyle)
+    const p = signalPill(await read($, lastSample), m.config, (await read($, pickedStyle)) ?? m.config.pillStyle, densityFor(e.props.bodyColumns))
     const { Box, Svg } = $.ui.resolve(e)
     const below = await next(e)
-    // Top-aligned, so when the plugins beneath wrap onto a second row the
-    // pill sits in line with their first row rather than between the two.
+    // One row, never wrapped: a narrow band tightens this pill's spacing, and
+    // usagebar, beneath, shrinks its pills to the room this one leaves.
     return (
-      <Box flexDirection="row" alignItems="flex-start" gap={1}>
+      <Box flexDirection="row" alignItems="center" flexWrap="nowrap" gap={1}>
         <Svg key="netsignal" source={p.source} alt={p.alt} width={p.width} height={p.height} />
         {below}
       </Box>

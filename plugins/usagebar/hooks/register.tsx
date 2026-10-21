@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, PluginOptions, Register, SessionMeasureInput } from 'claude-code'
 
 import type { UsageSnapshot as Snapshot, UsageTokens as Tokens } from '../types'
-import { type Run, STYLES, type Style, TONES, pill, styleFrom, tokens } from './pills'
+import { CELL, type Density, NETSIGNAL_ROOM, type Run, STYLES, SWITCH_ROOM, type Style, TONES, available, fit, pill, styleFrom, tokens } from './pills'
 
 // The latest reading, held by the host so the band redraws on each measurement.
 const lastReading = atom({ plugin: 'usagebar', key: 'last' } as const, null)
@@ -71,8 +71,16 @@ export const pace = (kind: string, resetsAt: string | undefined, now: number) =>
   return Math.max(0, Math.min(1, 1 - (at - now) / length))
 }
 
+// How much of a pill to draw: its spacing, and whether the limits keep their
+// reset countdown (the alt text always does).
+export type Variant = { density: Density; reset: boolean }
+const FULL: Variant = { density: 'normal', reset: true }
+
+// Richest to leanest: what the band tries as it runs short of room.
+const VARIANTS: Variant[] = [FULL, { density: 'tight', reset: true }, { density: 'tight', reset: false }]
+
 // The pills, in groups: the plan limits, the session's tokens, its cost.
-export const pills = (s: Snapshot, t: Tokens, c: Config, now: number, style: Style = c.pillStyle) => {
+export const pills = (s: Snapshot, t: Tokens, c: Config, now: number, style: Style = c.pillStyle, variant: Variant = FULL) => {
   const groups: { key: string; runs: Run[]; tone: (typeof TONES)[keyof typeof TONES]; alt: string }[][] = []
   const limits = s.windows.map(w => {
     const runs: Run[] = [
@@ -82,7 +90,7 @@ export const pills = (s: Snapshot, t: Tokens, c: Config, now: number, style: Sty
       { kind: 'text', text: pct(w.percent), bold: true },
     ]
     const reset = until(w.resetsAt, now, ' ')
-    if (reset) runs.push({ kind: 'icon', icon: 'clock' }, { kind: 'text', text: reset, muted: true })
+    if (reset && variant.reset) runs.push({ kind: 'icon', icon: 'clock' }, { kind: 'text', text: reset, muted: true })
     const tone = w.kind === 'seven_day' ? TONES.sevenDay : TONES.fiveHour
     return { key: w.kind, runs, tone, alt: `${label(w.kind)} limit ${pct(w.percent)} used${reset ? `, resets in ${reset}` : ''}` }
   })
@@ -109,10 +117,20 @@ export const pills = (s: Snapshot, t: Tokens, c: Config, now: number, style: Sty
     const runs: Run[] = [{ kind: 'icon', icon: 'coin' }, { kind: 'text', text: `$${s.usd.toFixed(2)}` }]
     groups.push([{ key: 'cost', runs, tone: TONES.cost, alt: `$${s.usd.toFixed(2)} this session` }])
   }
-  return groups.map(g => g.map(p => ({ key: p.key, alt: p.alt, ...pill(p.runs, p.tone, style) })))
+  return groups.map(g => g.map(p => ({ key: p.key, alt: p.alt, ...pill(p.runs, p.tone, style, variant.density) })))
 }
 
 const pct = (n: number) => `${Math.round(n)}%`
+
+// The pills as one row that fits `columns` cells of band: the richest variant
+// that needs no more than a mild shrink, scaled to the room left after
+// netsignal's pill and the style switch. Without a width, the full set.
+export const rowFor = (s: Snapshot, t: Tokens, c: Config, now: number, style: Style, columns: number | undefined) => {
+  const row = (v: Variant) => pills(s, t, c, now, style, v).flat()
+  if (!Number.isFinite(available(columns))) return { row: row(FULL), scale: 1 }
+  const room = available(columns) - NETSIGNAL_ROOM - SWITCH_ROOM
+  return fit(VARIANTS.map(row), room, CELL)
+}
 
 // One entry per figure, in the order they are shown.
 export const parts = (s: Snapshot, c: Config, now: number) => {
@@ -231,13 +249,13 @@ export const register: Register = (on, options) => {
     const s = await read($, lastReading)
     if (s === null) return next(e)
     const style = (await read($, pickedStyle)) ?? c.pillStyle
-    const groups = pills(s, await read($, tokenTotals), c, await $.clock.now(), style)
-    if (!groups.length) return next(e)
+    const { row } = rowFor(s, await read($, tokenTotals), c, await $.clock.now(), style, e.props.bodyColumns)
+    if (!row.length) return next(e)
     const { Box, Button, Svg } = $.ui.resolve(e)
     const below = await next(e)
     return (
-      <Box flexDirection="row" alignItems="center" flexWrap="wrap" gap={1}>
-        {groups.flat().map(p => (
+      <Box flexDirection="row" alignItems="center" flexWrap="nowrap" gap={1}>
+        {row.map(p => (
           <Svg key={`usagebar-${p.key}`} source={p.source} alt={p.alt} width={p.width} height={p.height} />
         ))}
         <Button

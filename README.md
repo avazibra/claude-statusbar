@@ -92,6 +92,8 @@ settings:
 | `desktopPlacement` | `pill` | desktop app: `pill` above the prompt, `footer` beside the model, or `both` |
 | `pillStyle` | `soft` | desktop pill look: `soft` (pastel), `outline`, `solid` or `dark`; usagebar's ◐ switch or `/pillstyle` overrides it for both mods |
 
+On the desktop the pill stays on one row with usagebar's pills: a narrow band tightens its spacing, and usagebar scales its own pills to the room left.
+
 ## Upgrading from 0.1.x
 
 0.1.x drew the signal through your `statusLine` setting, installed by `/netsignal`. If you ran

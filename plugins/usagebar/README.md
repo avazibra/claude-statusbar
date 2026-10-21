@@ -15,6 +15,7 @@ window is and, optionally, what the session has cost.
   figures show once; set `desktopPlacement` to `footer` or `both` to change that.
 - **Toast**: once per window when it crosses 90 %, with the time until it resets.
 - **`/usagebar`**: the same figures written out in full.
+- **One row, always**: the pills never wrap. When the band runs short they tighten their spacing, then drop the reset countdowns, then scale down (text and spacing together) to a floor. The band width is counted in character cells and converted at an assumed 7 px a cell, and 150 px is kept free for netsignal's pill.
 - **Style switch**: press ◐ at the end of the pills, or type `/pillstyle` (or `/pillstyle dark`),
   to cycle soft, outline, solid and dark. The pick is remembered and netsignal follows it.
 

@@ -1,8 +1,8 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { tokens } from './pills'
-import { configFrom, pace, pills, render, until } from './register'
+import { CELL, NETSIGNAL_ROOM, SWITCH_ROOM, fit, tokens } from './pills'
+import { configFrom, pace, pills, render, rowFor, until } from './register'
 
 const start = { cwd: '/', surface: 'terminal', isInteractive: true } as const
 const NOW = Date.parse('2026-10-03T06:00:00Z')
@@ -218,4 +218,80 @@ test('the switch and /pillstyle cycle the style and remember it', async ($, on) 
 
   const bad = await $.command.run({ command: 'pillstyle', args: 'neon', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
   expect(bad.text).toBe('Pill styles: soft, outline, solid, dark')
+})
+
+const full = {
+  windows: [
+    { kind: 'five_hour', percent: 42, resetsAt: '2026-10-03T08:10:00Z' },
+    { kind: 'seven_day', percent: 18, resetsAt: '2026-10-06T10:00:00Z' },
+  ],
+  contextTokens: 954_200,
+  usd: 14.32,
+}
+const sent = { input: 15_600, output: 3_000 }
+const rowWidth = (r: { width: number }[]) => r.reduce((w, p) => w + p.width, 0) + CELL * (r.length - 1)
+const roomAt = (columns: number) => columns * CELL - NETSIGNAL_ROOM - SWITCH_ROOM
+
+test('a wide band keeps the full pills, a narrow one shrinks them to fit', () => {
+  const c = configFrom({})
+  const at = (columns: number) => rowFor(full, sent, c, NOW, 'soft', columns)
+
+  const wide = at(200)
+  expect(wide.scale).toBe(1)
+  expect(wide.row.every(p => p.source.includes('>2h 10m<') || !p.key.includes('five'))).toBe(true)
+
+  // Every width from roomy to cramped: one row's worth of pills, never wider
+  // than the room (down to the floor), always the same figures.
+  let last = Infinity
+  for (let columns = 200; columns >= 60; columns -= 5) {
+    const { row, scale } = at(columns)
+    expect(row.map(p => p.key)).toEqual(['five_hour', 'seven_day', 'session', 'cost'])
+    if (scale > 0.6) expect(rowWidth(row)).toBeLessThanOrEqual(roomAt(columns))
+    expect(rowWidth(row)).toBeLessThanOrEqual(last)
+    last = rowWidth(row)
+  }
+
+  // Scaling keeps the markup's own size, so text and spacing shrink together.
+  const narrow = at(70)
+  expect(narrow.scale).toBeLessThan(1)
+  const p = narrow.row[0]!
+  expect(p.source).toContain('viewBox="0 0 ')
+  expect(p.height).toBeLessThan(24)
+})
+
+test('short on room, the limits drop their countdown before the pills shrink far', () => {
+  const c = configFrom({})
+  const widest = rowFor(full, sent, c, NOW, 'soft', 200).row
+  const lean = rowFor(full, sent, c, NOW, 'soft', 80)
+  const limit = lean.row[0]!
+  expect(limit.source).not.toContain('>2h 10m<')
+  // The alt text still says when it resets.
+  expect(limit.alt).toBe('5h limit 42% used, resets in 2h 10m')
+  expect(lean.scale).toBeGreaterThan(0.6)
+  expect(rowWidth(lean.row)).toBeLessThan(rowWidth(widest))
+})
+
+test('fit never goes below the floor, even with no room at all', () => {
+  const { row, scale } = fit([[{ width: 100, height: 24 }, { width: 100, height: 24 }]], 10, 7)
+  expect(scale).toBe(0.6)
+  expect(row.map(p => p.width)).toEqual([60, 60])
+})
+
+test('the band is one row that does not wrap, at any width', async ($, on) => {
+  const { clock } = wire(on)
+  await $.session.start(start)
+  await clock.settle()
+  for (const bodyColumns of [200, 100, 60]) {
+    const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+    const band = await $.ui.mount({ plugin: 'usagebar', surface: 'desktop', component: 'AbovePrompt', props })
+    expect((await band.find({ type: 'Box' }))?.props.flexWrap).toBe('nowrap')
+    expect((await band.findAll({ type: 'Svg' })).length).toBe(4)
+  }
+  // A narrow band draws smaller pills than a wide one.
+  const sizeAt = async (bodyColumns: number) => {
+    const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+    const band = await $.ui.mount({ plugin: 'usagebar', surface: 'desktop', component: 'AbovePrompt', props })
+    return (await band.findAll({ type: 'Svg' })).reduce((w, x) => w + Number(x.props.width), 0)
+  }
+  expect(await sizeAt(60)).toBeLessThan(await sizeAt(200))
 })

@@ -165,8 +165,8 @@ test('desktop band shows a pill beside the pills beneath it', async ($, on) => {
   const band = await $.ui.mount({ plugin: 'netsignal', surface: 'desktop', component: 'AbovePrompt', props: BAND })
   expect((await band.find({ type: 'Svg' }))?.props.alt).toBe('Network signal: ▂▄▆ 48ms')
   expect(await band.find({ text: '5h 20%' })).not.toBe(undefined)
-  // In line with the first row of the pills beneath, not centred on them.
-  expect((await band.find({ type: 'Box' }))?.props.alignItems).toBe('flex-start')
+  // One row: the band never wraps onto a second line.
+  expect((await band.find({ type: 'Box' }))?.props.flexWrap).toBe('nowrap')
 })
 
 test('desktop hides the footer status line by default', async ($, on) => {
@@ -318,4 +318,24 @@ test("follows the style usagebar's switch picks, and remembers it", { plugins: [
   await $.command.run({ command: 'pick', args: 'dark', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
   expect(await bg()).toBe('#33322f')
   expect(stored.pillStyle).toBe('dark')
+})
+
+test('a narrow band tightens the signal pill and keeps the row from wrapping', async ($, on) => {
+  const clock = mock.clock(on)
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text key="other">5h 20%</Text>
+  })
+  await $.session.start(start)
+  await clock.advance(2000)
+
+  const widthAt = async (bodyColumns: number) => {
+    const band = await $.ui.mount({ plugin: 'netsignal', surface: 'desktop', component: 'AbovePrompt', props: { ...BAND, bodyColumns } })
+    expect((await band.find({ type: 'Box' }))?.props.flexWrap).toBe('nowrap')
+    return Number((await band.find({ type: 'Svg' }))?.props.width)
+  }
+  expect(await widthAt(60)).toBeLessThan(await widthAt(200))
 })
