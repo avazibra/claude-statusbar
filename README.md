@@ -112,6 +112,8 @@ desktop app, add `"env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/claude-statusbar
 `claude plugin validate .claude-plugin/plugin.json` and `claude plugin test .`.
 That run also finds `plugins/usagebar`'s tests, which only pass from their own folder:
 check usagebar with `claude plugin test plugins/usagebar`.
+The classic installer and its shim are tested with `bash test/install.test.sh` (throwaway `HOME`,
+no network).
 
 ## Classic status line (older Claude Code)
 
@@ -124,8 +126,9 @@ and the sampler exits by itself 15 minutes after the last render.
 ```
 
 `/netsignal` runs the install step, which writes a small shim at `~/.claude/netsignal` and points
-`statusLine` in `~/.claude/settings.json` at it. The shim resolves the currently installed
-plugin version on every run, so plugin updates never break the status line. If you already have a status line it is kept and the signal is appended to it.
+`statusLine` in `~/.claude/settings.json` at it. The shim runs the newest installed `netsignal@*` plugin on every run, so plugin updates and
+marketplace renames never break the status line, and `install` leaves a `statusLine` that already
+runs netsignal (directly, or through your own wrapper script) alone. If you already have a status line it is kept and the signal is appended to it.
 `/netsignal` also removes it or tunes thresholds on request.
 
 Manual equivalents: `bin/netsignal install`, `bin/netsignal uninstall`, `bin/netsignal status`.
@@ -163,6 +166,7 @@ hooks/register.test.tsx         `claude plugin test .`
 types/index.d.ts                the mod's $.state contract
 skills/netsignal/SKILL.md       /netsignal: classic status line install, remove, tune, diagnose
 bin/netsignal                   classic sampler + renderer + installer (one bash script)
+test/install.test.sh            tests for `install`/`uninstall` and the shim
 plugins/usagebar/               the usagebar mod (its own plugin in this marketplace)
 ```
 

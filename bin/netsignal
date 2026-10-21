@@ -167,30 +167,70 @@ cmd_statusline() {
 
 settings_file() { printf '%s' "${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"; }
 
+# True when a status-line command already routes through netsignal: it names netsignal
+# itself, or it runs a script (a wrapper such as a custom status-line script) that does.
+# Installing over such a command would make netsignal and the wrapper call each other.
+wraps_netsignal() {
+  local cmd=$1 tok
+  [[ $cmd == *netsignal* ]] && return 0
+  set -f # no globbing while splitting the command into words
+  for tok in $cmd; do
+    tok=${tok//[\"\']/}
+    tok=${tok//\$\{HOME\}/$HOME}; tok=${tok//\$HOME/$HOME}
+    [[ $tok == '~'/* ]] && tok="$HOME/${tok#\~/}"
+    [[ -f $tok && -r $tok ]] || continue
+    if [[ $(wc -c < "$tok") -le 262144 ]] && grep -aqi netsignal "$tok" 2>/dev/null; then set +f; return 0; fi
+  done
+  set +f
+  return 1
+}
+
+# The shim resolves the live plugin on every run, so neither a plugin update (new
+# versioned install dir) nor a marketplace rename (new installed_plugins.json key)
+# breaks the status line. It takes every `netsignal@<marketplace>` entry, newest
+# `lastUpdated` first, and runs the first one whose bin/netsignal is executable.
+# $1 is the fallback plugin root, used when the registry has no usable entry.
+write_shim() {
+  local shim=$1 root=$2
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '# netsignal shim (written by `netsignal install`): exec the currently installed plugin.\n'
+    printf 'FALLBACK=%q\n' "$root"
+    cat <<'SHIM'
+p=''
+while IFS= read -r c; do
+  [[ -x $c/bin/netsignal ]] && { p=$c; break; }
+done < <(jq -r '[(.plugins // {}) | to_entries[] | select(.key | startswith("netsignal@")) | .value[]?]
+  | sort_by(.lastUpdated // "") | reverse | .[] | .installPath // empty' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
+[[ -n $p ]] || p=$FALLBACK
+exec "$p/bin/netsignal" "$@"
+SHIM
+  } > "$shim"
+  chmod +x "$shim"
+}
+
 cmd_install() {
   command -v jq >/dev/null || { echo "netsignal: jq is required for install" >&2; exit 1; }
   local f; f=$(settings_file)
+  mkdir -p "$HOME/.claude" "$(dirname "$f")"
   [[ -f $f ]] || echo '{}' > "$f"
   local self; self=$(cd "$(dirname "$0")" && pwd)/netsignal
+  local shim="$HOME/.claude/netsignal" root; root=$(dirname "$(dirname "$self")")
+  # Always refresh the shim: it is ours, and rewriting it repairs an old one.
+  write_shim "$shim" "$root"
   local current; current=$(jq -r '.statusLine.command // ""' "$f")
-  if [[ $current == *netsignal* && ${1:-} != --force ]]; then
-    echo "netsignal: already installed ($current)"; return
+  if [[ -n $current ]] && wraps_netsignal "$current"; then
+    if [[ ${1:-} == --force && $current == *netsignal* ]]; then
+      : # a direct netsignal statusLine: --force re-points it at the shim below
+    else
+      echo "netsignal: already installed ($current); shim refreshed at $shim"; return
+    fi
   fi
   if [[ -n $current && $current != *netsignal* ]]; then
     printf 'inner=%s\n' "$current" > "$CONF"
     echo "netsignal: wrapping existing status line: $current"
   fi
-  # A shim resolves the live plugin path on every run, so a plugin update (which
-  # changes the versioned install dir) does not break the status line.
-  local shim="$HOME/.claude/netsignal" root; root=$(dirname "$(dirname "$self")")
-  cat > "$shim" <<SHIM
-#!/usr/bin/env bash
-# netsignal shim (written by \`netsignal install\`): exec the currently installed plugin.
-p=\$(jq -r '.plugins["netsignal@claude-statusbar"][0].installPath // .plugins["netsignal@claude-netsignal"][0].installPath // empty' "\$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
-[[ -n \$p && -x \$p/bin/netsignal ]] || p="$root"
-exec "\$p/bin/netsignal" "\$@"
-SHIM
-  chmod +x "$shim"
   local tmp="$f.tmp.$$"
   jq --arg c "\"$shim\" statusline" '.statusLine = {type:"command", command:$c}' "$f" > "$tmp" && mv -f "$tmp" "$f"
   echo "netsignal: statusLine set to $shim statusline (shim -> $self)"
@@ -199,6 +239,12 @@ SHIM
 cmd_uninstall() {
   command -v jq >/dev/null || { echo "netsignal: jq is required" >&2; exit 1; }
   local f; f=$(settings_file)
+  [[ -f $f ]] || { echo "netsignal: no settings file at $f"; return; }
+  local current; current=$(jq -r '.statusLine.command // ""' "$f")
+  # A statusLine that merely wraps netsignal through another script is the user's own.
+  if [[ -n $current && $current != *netsignal* ]]; then
+    echo "netsignal: statusLine ($current) is not netsignal's; left as is"; return
+  fi
   local inner=''; [[ -f $CONF ]] && inner=$(sed -n 's/^inner=//p' "$CONF")
   local tmp="$f.tmp.$$"
   if [[ -n $inner ]]; then
