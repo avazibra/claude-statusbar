@@ -158,9 +158,10 @@ export const tokens = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n))
 
 // The band's width is counted in character cells (`bodyColumns`); the pills are
-// drawn in CSS pixels. This many pixels to a cell is an assumption, set low so
-// a wrong guess shrinks the row early rather than wrapping it.
-export const CELL = 7
+// drawn in CSS pixels. Measured on the desktop app with a pixel ruler against
+// a box `bodyColumns` wide: 91 cells were 745 px, 8.2 px a cell. Rounded down
+// so a little error shrinks the row early rather than wrapping it.
+export const CELL = 8
 // Pixels a row of the band keeps for the netsignal pill and its gap, which
 // usagebar cannot see: set aside whether netsignal is loaded or not.
 export const NETSIGNAL_ROOM = 150 + CELL
